@@ -79,11 +79,13 @@ spec:
 
   # Required GitHub App permissions
   permissions:
+    # Core permissions (required)
     issues: write
     pull_requests: write
     metadata: read
-    discussions: write    # optional
-    contents: read        # optional
+    # Feature-specific permissions (only needed if using those features)
+    discussions: write    # Required for discussion events
+    contents: read        # Required for file context in reviews
 
   # Configuration schema reference
   configSchema:

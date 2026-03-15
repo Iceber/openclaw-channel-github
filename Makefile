@@ -59,7 +59,13 @@ vet:  ## Run go vet
 	$(GO) vet ./...
 
 fmt:  ## Check code formatting
-	@gofmt -l . | grep -v vendor | tee /dev/stderr | xargs -I {} test -z "{}"
+	@UNFORMATTED=$$(gofmt -l . | grep -v vendor); \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "The following files need formatting:"; \
+		echo "$$UNFORMATTED"; \
+		exit 1; \
+	fi
+	@echo "All files are properly formatted"
 
 help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
