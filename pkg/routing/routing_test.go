@@ -147,9 +147,15 @@ func TestIsBotSender(t *testing.T) {
 		expected    bool
 	}{
 		{
-			name:     "bot type sender",
+			name:       "bot type sender with ignoreBots",
+			sender:     normalizer.Sender{Login: "app[bot]", IsBot: true},
+			ignoreBots: true,
+			expected:   true,
+		},
+		{
+			name:     "bot type sender without ignoreBots",
 			sender:   normalizer.Sender{Login: "app[bot]", IsBot: true},
-			expected: true,
+			expected: false,
 		},
 		{
 			name:        "matching bot username",

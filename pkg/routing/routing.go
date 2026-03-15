@@ -79,9 +79,6 @@ func hasCommandPrefix(text, cmd string) bool {
 
 // IsBotSender checks whether the sender should be ignored (bot loop prevention).
 func IsBotSender(event *normalizer.NormalizedEvent, botUsername string, ignoreBots bool) bool {
-	if event.Sender.IsBot {
-		return true
-	}
 	if ignoreBots && event.Sender.IsBot {
 		return true
 	}
