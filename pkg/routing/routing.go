@@ -12,12 +12,17 @@ import (
 
 // SessionKey generates a stable session key for a normalized event.
 // Format: github:<owner>/<repo>:<threadType>:<number>
+// For review threads: github:<owner>/<repo>:pull_request:<number>:review-thread:<threadId>
 func SessionKey(event *normalizer.NormalizedEvent) string {
-	return fmt.Sprintf("github:%s:%s:%d",
+	base := fmt.Sprintf("github:%s:%s:%d",
 		event.Repository,
 		event.Thread.Type,
 		event.Thread.Number,
 	)
+	if event.Context != nil && event.Context.ReviewThreadID != 0 {
+		return fmt.Sprintf("%s:review-thread:%d", base, event.Context.ReviewThreadID)
+	}
+	return base
 }
 
 // TriggerResult describes whether and how an event should trigger the agent.
@@ -49,11 +54,33 @@ func EvaluateTrigger(cfg *config.TriggerConfig, event *normalizer.NormalizedEven
 		}
 	}
 
+	// Check label triggers from context
+	if len(cfg.Labels) > 0 && event.Context != nil {
+		for _, cfgLabel := range cfg.Labels {
+			for _, evtLabel := range event.Context.Labels {
+				if strings.EqualFold(cfgLabel, evtLabel) {
+					return TriggerResult{Triggered: true, Kind: normalizer.TriggerKindLabel}
+				}
+			}
+		}
+	}
+
 	// If mention is not required and no commands are configured, treat as auto-trigger
 	if !cfg.RequireMention && len(cfg.Commands) == 0 && len(cfg.Labels) == 0 {
 		return TriggerResult{Triggered: true, Kind: normalizer.TriggerKindAuto}
 	}
 
+	return TriggerResult{Triggered: false}
+}
+
+// EvaluateAutoTrigger checks if an event qualifies for auto-trigger based on config.
+func EvaluateAutoTrigger(cfg *config.AutoTriggerConfig, event *normalizer.NormalizedEvent) TriggerResult {
+	if cfg.OnPROpened && event.Thread.Type == normalizer.ThreadTypePullRequest && event.Message.Type == normalizer.MessageTypePRBody {
+		return TriggerResult{Triggered: true, Kind: normalizer.TriggerKindAuto}
+	}
+	if cfg.OnIssueOpened && event.Thread.Type == normalizer.ThreadTypeIssue && event.Message.Type == normalizer.MessageTypeIssueBody {
+		return TriggerResult{Triggered: true, Kind: normalizer.TriggerKindAuto}
+	}
 	return TriggerResult{Triggered: false}
 }
 
@@ -86,4 +113,12 @@ func IsBotSender(event *normalizer.NormalizedEvent, botUsername string, ignoreBo
 		return true
 	}
 	return false
+}
+
+// HasOutboundMarker checks if the event message contains the outbound marker.
+func HasOutboundMarker(event *normalizer.NormalizedEvent, marker string) bool {
+	if marker == "" {
+		return false
+	}
+	return strings.Contains(event.Message.Text, marker)
 }

@@ -125,8 +125,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Outbound marker detection (bot loop prevention via marker)
+	if routing.HasOutboundMarker(normalized, h.cfg.Channel.Outbound.OutboundMarker) {
+		h.logger.Info("ignoring outbound-marked message", "sender", normalized.Sender.Login)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"status":"outbound_marker_ignored"}`)
+		return
+	}
+
 	// Evaluate trigger
 	triggerResult := routing.EvaluateTrigger(&h.cfg.Channel.Trigger, normalized)
+
+	// Check auto-trigger if regular trigger didn't match
+	if !triggerResult.Triggered {
+		triggerResult = routing.EvaluateAutoTrigger(&h.cfg.Channel.AutoTrigger, normalized)
+	}
 	if !triggerResult.Triggered {
 		h.logger.Info("trigger not matched, skipping",
 			"repo", normalized.Repository,
@@ -201,28 +214,77 @@ func (h *Handler) normalizeEvent(eventType events.EventType, parsed any) *normal
 	switch eventType {
 	case events.EventIssues:
 		e := parsed.(*events.IssueEvent)
-		if e.Action == events.ActionOpened {
+		switch e.Action {
+		case events.ActionOpened:
 			return normalizer.NormalizeIssueOpened(e)
+		case events.ActionEdited:
+			return normalizer.NormalizeIssueEdited(e)
+		case events.ActionClosed:
+			return normalizer.NormalizeIssueClosed(e)
+		case events.ActionReopened:
+			return normalizer.NormalizeIssueReopened(e)
+		case events.ActionLabeled:
+			return normalizer.NormalizeIssueLabeled(e)
 		}
+
 	case events.EventIssueComment:
 		e := parsed.(*events.IssueCommentEvent)
-		if e.Action == events.ActionCreated {
+		switch e.Action {
+		case events.ActionCreated:
 			return normalizer.NormalizeIssueComment(e)
+		case events.ActionEdited:
+			return normalizer.NormalizeIssueCommentEdited(e)
 		}
+
 	case events.EventPullRequest:
 		e := parsed.(*events.PullRequestEvent)
-		if e.Action == events.ActionOpened {
+		switch e.Action {
+		case events.ActionOpened:
 			return normalizer.NormalizePullRequestOpened(e)
+		case events.ActionEdited:
+			return normalizer.NormalizePullRequestEdited(e)
+		case events.ActionClosed:
+			return normalizer.NormalizePullRequestClosed(e)
+		case events.ActionSynchronize:
+			return normalizer.NormalizePullRequestSynchronize(e)
+		case events.ActionLabeled:
+			return normalizer.NormalizePullRequestLabeled(e)
 		}
+
 	case events.EventPullRequestReview:
 		e := parsed.(*events.PullRequestReviewEvent)
 		if e.Action == events.ActionSubmitted {
 			return normalizer.NormalizePullRequestReview(e)
 		}
+
 	case events.EventPullRequestReviewComment:
 		e := parsed.(*events.PullRequestReviewCommentEvent)
 		if e.Action == events.ActionCreated {
 			return normalizer.NormalizePullRequestReviewComment(e)
+		}
+
+	case events.EventDiscussion:
+		e := parsed.(*events.DiscussionEvent)
+		if e.Action == events.ActionCreated {
+			return normalizer.NormalizeDiscussionCreated(e)
+		}
+
+	case events.EventDiscussionComment:
+		e := parsed.(*events.DiscussionCommentEvent)
+		if e.Action == events.ActionCreated {
+			return normalizer.NormalizeDiscussionComment(e)
+		}
+
+	case events.EventCheckRun:
+		e := parsed.(*events.CheckRunEvent)
+		if e.Action == events.ActionCompleted {
+			return normalizer.NormalizeCheckRun(e)
+		}
+
+	case events.EventWorkflowRun:
+		e := parsed.(*events.WorkflowRunEvent)
+		if e.Action == events.ActionCompleted {
+			return normalizer.NormalizeWorkflowRun(e)
 		}
 	}
 	return nil

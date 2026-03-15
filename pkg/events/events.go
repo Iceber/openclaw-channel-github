@@ -16,19 +16,31 @@ const (
 	EventPullRequest               EventType = "pull_request"
 	EventPullRequestReview         EventType = "pull_request_review"
 	EventPullRequestReviewComment  EventType = "pull_request_review_comment"
+	EventDiscussion                EventType = "discussion"
+	EventDiscussionComment         EventType = "discussion_comment"
+	EventCheckRun                  EventType = "check_run"
+	EventWorkflowRun               EventType = "workflow_run"
 )
 
 // Action represents the action within a GitHub webhook event.
 type Action string
 
 const (
-	ActionOpened    Action = "opened"
-	ActionEdited    Action = "edited"
-	ActionClosed    Action = "closed"
-	ActionCreated   Action = "created"
-	ActionSubmitted Action = "submitted"
-	ActionLabeled   Action = "labeled"
-	ActionUnlabeled Action = "unlabeled"
+	ActionOpened      Action = "opened"
+	ActionEdited      Action = "edited"
+	ActionClosed      Action = "closed"
+	ActionReopened    Action = "reopened"
+	ActionCreated     Action = "created"
+	ActionDeleted     Action = "deleted"
+	ActionSubmitted   Action = "submitted"
+	ActionLabeled     Action = "labeled"
+	ActionUnlabeled   Action = "unlabeled"
+	ActionAssigned    Action = "assigned"
+	ActionUnassigned  Action = "unassigned"
+	ActionSynchronize Action = "synchronize"
+	ActionMerged      Action = "merged"
+	ActionCompleted   Action = "completed"
+	ActionRequested   Action = "requested"
 )
 
 // WebhookEvent is the raw envelope for a GitHub webhook delivery.
@@ -67,8 +79,11 @@ type Issue struct {
 	State     string    `json:"state"`
 	User      User      `json:"user"`
 	Labels    []Label   `json:"labels"`
+	Assignees []User    `json:"assignees"`
 	HTMLURL   string    `json:"html_url"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	ClosedAt  *time.Time `json:"closed_at"`
 }
 
 // PullRequest represents a GitHub pull request.
@@ -77,10 +92,24 @@ type PullRequest struct {
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
 	State     string    `json:"state"`
+	Merged    bool      `json:"merged"`
 	User      User      `json:"user"`
 	Labels    []Label   `json:"labels"`
+	Assignees []User    `json:"assignees"`
 	HTMLURL   string    `json:"html_url"`
+	DiffURL   string    `json:"diff_url"`
+	Head      GitRef    `json:"head"`
+	Base      GitRef    `json:"base"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	ClosedAt  *time.Time `json:"closed_at"`
+	MergedAt  *time.Time `json:"merged_at"`
+}
+
+// GitRef represents a git reference (branch).
+type GitRef struct {
+	Ref string `json:"ref"`
+	SHA string `json:"sha"`
 }
 
 // Comment represents a GitHub comment (on issue or PR).
@@ -90,6 +119,21 @@ type Comment struct {
 	User      User      `json:"user"`
 	HTMLURL   string    `json:"html_url"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ReviewComment represents a GitHub pull request review comment (inline).
+type ReviewComment struct {
+	ID                int64     `json:"id"`
+	Body              string    `json:"body"`
+	Path              string    `json:"path"`
+	Line              int       `json:"line"`
+	Side              string    `json:"side"`
+	InReplyToID       int64     `json:"in_reply_to_id"`
+	PullRequestReviewID int64   `json:"pull_request_review_id"`
+	User              User      `json:"user"`
+	HTMLURL           string    `json:"html_url"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // Review represents a GitHub pull request review.
@@ -111,6 +155,8 @@ type Installation struct {
 type IssueEvent struct {
 	Action       Action       `json:"action"`
 	Issue        Issue        `json:"issue"`
+	Label        *Label       `json:"label,omitempty"`
+	Assignee     *User        `json:"assignee,omitempty"`
 	Repository   Repository   `json:"repository"`
 	Sender       User         `json:"sender"`
 	Installation Installation `json:"installation"`
@@ -130,6 +176,8 @@ type IssueCommentEvent struct {
 type PullRequestEvent struct {
 	Action       Action       `json:"action"`
 	PullRequest  PullRequest  `json:"pull_request"`
+	Label        *Label       `json:"label,omitempty"`
+	Assignee     *User        `json:"assignee,omitempty"`
 	Repository   Repository   `json:"repository"`
 	Sender       User         `json:"sender"`
 	Installation Installation `json:"installation"`
@@ -147,9 +195,95 @@ type PullRequestReviewEvent struct {
 
 // PullRequestReviewCommentEvent is the payload for pull_request_review_comment webhook events.
 type PullRequestReviewCommentEvent struct {
+	Action       Action        `json:"action"`
+	Comment      ReviewComment `json:"comment"`
+	PullRequest  PullRequest   `json:"pull_request"`
+	Repository   Repository    `json:"repository"`
+	Sender       User          `json:"sender"`
+	Installation Installation  `json:"installation"`
+}
+
+// Discussion represents a GitHub discussion.
+type Discussion struct {
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	State     string    `json:"state"`
+	Category  DiscussionCategory `json:"category"`
+	User      User      `json:"user"`
+	HTMLURL   string    `json:"html_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DiscussionCategory represents a discussion category.
+type DiscussionCategory struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// DiscussionComment represents a GitHub discussion comment.
+type DiscussionComment struct {
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	User      User      `json:"user"`
+	HTMLURL   string    `json:"html_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DiscussionEvent is the payload for discussion webhook events.
+type DiscussionEvent struct {
 	Action       Action       `json:"action"`
-	Comment      Comment      `json:"comment"`
-	PullRequest  PullRequest  `json:"pull_request"`
+	Discussion   Discussion   `json:"discussion"`
+	Repository   Repository   `json:"repository"`
+	Sender       User         `json:"sender"`
+	Installation Installation `json:"installation"`
+}
+
+// DiscussionCommentEvent is the payload for discussion_comment webhook events.
+type DiscussionCommentEvent struct {
+	Action       Action            `json:"action"`
+	Discussion   Discussion        `json:"discussion"`
+	Comment      DiscussionComment `json:"comment"`
+	Repository   Repository        `json:"repository"`
+	Sender       User              `json:"sender"`
+	Installation Installation      `json:"installation"`
+}
+
+// CheckRun represents a GitHub check run.
+type CheckRun struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	HTMLURL    string    `json:"html_url"`
+	StartedAt  time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+}
+
+// CheckRunEvent is the payload for check_run webhook events.
+type CheckRunEvent struct {
+	Action       Action       `json:"action"`
+	CheckRun     CheckRun     `json:"check_run"`
+	Repository   Repository   `json:"repository"`
+	Sender       User         `json:"sender"`
+	Installation Installation `json:"installation"`
+}
+
+// WorkflowRun represents a GitHub Actions workflow run.
+type WorkflowRun struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	HTMLURL    string    `json:"html_url"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// WorkflowRunEvent is the payload for workflow_run webhook events.
+type WorkflowRunEvent struct {
+	Action       Action       `json:"action"`
+	WorkflowRun  WorkflowRun  `json:"workflow_run"`
 	Repository   Repository   `json:"repository"`
 	Sender       User         `json:"sender"`
 	Installation Installation `json:"installation"`
@@ -190,6 +324,34 @@ func ParseEvent(eventType EventType, payload []byte) (any, error) {
 		var e PullRequestReviewCommentEvent
 		if err := json.Unmarshal(payload, &e); err != nil {
 			return nil, fmt.Errorf("parsing pull_request_review_comment event: %w", err)
+		}
+		return &e, nil
+
+	case EventDiscussion:
+		var e DiscussionEvent
+		if err := json.Unmarshal(payload, &e); err != nil {
+			return nil, fmt.Errorf("parsing discussion event: %w", err)
+		}
+		return &e, nil
+
+	case EventDiscussionComment:
+		var e DiscussionCommentEvent
+		if err := json.Unmarshal(payload, &e); err != nil {
+			return nil, fmt.Errorf("parsing discussion_comment event: %w", err)
+		}
+		return &e, nil
+
+	case EventCheckRun:
+		var e CheckRunEvent
+		if err := json.Unmarshal(payload, &e); err != nil {
+			return nil, fmt.Errorf("parsing check_run event: %w", err)
+		}
+		return &e, nil
+
+	case EventWorkflowRun:
+		var e WorkflowRunEvent
+		if err := json.Unmarshal(payload, &e); err != nil {
+			return nil, fmt.Errorf("parsing workflow_run event: %w", err)
 		}
 		return &e, nil
 

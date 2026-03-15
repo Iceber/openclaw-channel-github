@@ -2,6 +2,7 @@
 package normalizer
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/Iceber/openclaw-channel-github/pkg/events"
@@ -16,16 +17,21 @@ type ThreadType string
 const (
 	ThreadTypeIssue       ThreadType = "issue"
 	ThreadTypePullRequest ThreadType = "pull_request"
+	ThreadTypeDiscussion  ThreadType = "discussion"
 )
 
 // MessageType represents the type of normalized message.
 type MessageType string
 
 const (
-	MessageTypeComment     MessageType = "comment"
-	MessageTypeIssueBody   MessageType = "issue_body"
-	MessageTypePRBody      MessageType = "pr_body"
-	MessageTypeReview      MessageType = "review"
+	MessageTypeComment       MessageType = "comment"
+	MessageTypeIssueBody     MessageType = "issue_body"
+	MessageTypePRBody        MessageType = "pr_body"
+	MessageTypeReview        MessageType = "review"
+	MessageTypeReviewComment MessageType = "review_comment"
+	MessageTypeDiscussionBody MessageType = "discussion_body"
+	MessageTypeContextUpdate MessageType = "context_update"
+	MessageTypeCIStatus      MessageType = "ci_status"
 )
 
 // TriggerKind describes how the event was triggered.
@@ -71,13 +77,46 @@ type Trigger struct {
 
 // NormalizedEvent is the unified event format consumed by the OpenClaw Gateway.
 type NormalizedEvent struct {
-	Provider   string  `json:"provider"`
-	AccountID  string  `json:"accountId"`
-	Repository string  `json:"repository"`
-	Thread     Thread  `json:"thread"`
-	Message    Message `json:"message"`
-	Sender     Sender  `json:"sender"`
-	Trigger    Trigger `json:"trigger"`
+	Provider   string   `json:"provider"`
+	AccountID  string   `json:"accountId"`
+	Repository string   `json:"repository"`
+	Thread     Thread   `json:"thread"`
+	Message    Message  `json:"message"`
+	Sender     Sender   `json:"sender"`
+	Trigger    Trigger  `json:"trigger"`
+	Context    *Context `json:"context,omitempty"`
+}
+
+// Context holds additional metadata about the event for agent decision-making.
+type Context struct {
+	// Labels on the issue/PR at event time.
+	Labels []string `json:"labels,omitempty"`
+	// Assignees of the issue/PR.
+	Assignees []string `json:"assignees,omitempty"`
+	// State of the issue/PR (open, closed, merged).
+	State string `json:"state,omitempty"`
+	// EventAction is the raw GitHub action (opened, edited, closed, labeled, etc.).
+	EventAction string `json:"eventAction,omitempty"`
+	// ReviewState for review events (approved, changes_requested, commented).
+	ReviewState string `json:"reviewState,omitempty"`
+	// FilePath for inline review comments.
+	FilePath string `json:"filePath,omitempty"`
+	// Line number for inline review comments.
+	Line int `json:"line,omitempty"`
+	// CIStatus for check_run/workflow_run events.
+	CIStatus string `json:"ciStatus,omitempty"`
+	// CIConclusion for check_run/workflow_run events.
+	CIConclusion string `json:"ciConclusion,omitempty"`
+	// Merged indicates if a PR was merged.
+	Merged bool `json:"merged,omitempty"`
+	// HeadRef is the head branch of a PR.
+	HeadRef string `json:"headRef,omitempty"`
+	// BaseRef is the base branch of a PR.
+	BaseRef string `json:"baseRef,omitempty"`
+	// ReviewThreadID for thread-level session keys.
+	ReviewThreadID int64 `json:"reviewThreadId,omitempty"`
+	// DiscussionCategory for discussion events.
+	DiscussionCategory string `json:"discussionCategory,omitempty"`
 }
 
 // NormalizeIssueOpened normalizes an issue opened event.
@@ -176,13 +215,360 @@ func NormalizePullRequestReviewComment(e *events.PullRequestReviewCommentEvent) 
 			URL:    e.PullRequest.HTMLURL,
 		},
 		Message: Message{
-			Type:      MessageTypeComment,
+			Type:      MessageTypeReviewComment,
 			ID:        formatCommentID(e.Comment.ID),
 			Text:      e.Comment.Body,
 			CreatedAt: e.Comment.CreatedAt,
 		},
 		Sender: senderFromUser(e.Sender),
+		Context: &Context{
+			FilePath:       e.Comment.Path,
+			Line:           e.Comment.Line,
+			ReviewThreadID: e.Comment.PullRequestReviewID,
+		},
 	}
+}
+
+// NormalizeIssueEdited normalizes an issue edited event.
+func NormalizeIssueEdited(e *events.IssueEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeIssue,
+			Number: e.Issue.Number,
+			Title:  e.Issue.Title,
+			URL:    e.Issue.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatIssueID(e.Repository.FullName, e.Issue.Number) + ":edited",
+			Text:      e.Issue.Body,
+			CreatedAt: e.Issue.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: issueContext(e),
+	}
+}
+
+// NormalizeIssueClosed normalizes an issue closed event.
+func NormalizeIssueClosed(e *events.IssueEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeIssue,
+			Number: e.Issue.Number,
+			Title:  e.Issue.Title,
+			URL:    e.Issue.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatIssueID(e.Repository.FullName, e.Issue.Number) + ":closed",
+			Text:      "Issue closed",
+			CreatedAt: e.Issue.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: issueContext(e),
+	}
+}
+
+// NormalizeIssueReopened normalizes an issue reopened event.
+func NormalizeIssueReopened(e *events.IssueEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeIssue,
+			Number: e.Issue.Number,
+			Title:  e.Issue.Title,
+			URL:    e.Issue.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatIssueID(e.Repository.FullName, e.Issue.Number) + ":reopened",
+			Text:      "Issue reopened",
+			CreatedAt: e.Issue.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: issueContext(e),
+	}
+}
+
+// NormalizeIssueLabeled normalizes an issue labeled event.
+func NormalizeIssueLabeled(e *events.IssueEvent) *NormalizedEvent {
+	labelName := ""
+	if e.Label != nil {
+		labelName = e.Label.Name
+	}
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeIssue,
+			Number: e.Issue.Number,
+			Title:  e.Issue.Title,
+			URL:    e.Issue.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatIssueID(e.Repository.FullName, e.Issue.Number) + ":labeled:" + labelName,
+			Text:      "Label added: " + labelName,
+			CreatedAt: e.Issue.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: issueContext(e),
+	}
+}
+
+// NormalizeIssueCommentEdited normalizes an issue comment edited event.
+func NormalizeIssueCommentEdited(e *events.IssueCommentEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   threadTypeFromIssue(e.Issue),
+			Number: e.Issue.Number,
+			Title:  e.Issue.Title,
+			URL:    e.Issue.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatCommentID(e.Comment.ID) + ":edited",
+			Text:      e.Comment.Body,
+			CreatedAt: e.Comment.UpdatedAt,
+		},
+		Sender: senderFromUser(e.Sender),
+	}
+}
+
+// NormalizePullRequestEdited normalizes a pull request edited event.
+func NormalizePullRequestEdited(e *events.PullRequestEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypePullRequest,
+			Number: e.PullRequest.Number,
+			Title:  e.PullRequest.Title,
+			URL:    e.PullRequest.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatPRID(e.Repository.FullName, e.PullRequest.Number) + ":edited",
+			Text:      e.PullRequest.Body,
+			CreatedAt: e.PullRequest.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: prContext(e),
+	}
+}
+
+// NormalizePullRequestClosed normalizes a pull request closed event.
+func NormalizePullRequestClosed(e *events.PullRequestEvent) *NormalizedEvent {
+	text := "Pull request closed"
+	if e.PullRequest.Merged {
+		text = "Pull request merged"
+	}
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypePullRequest,
+			Number: e.PullRequest.Number,
+			Title:  e.PullRequest.Title,
+			URL:    e.PullRequest.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatPRID(e.Repository.FullName, e.PullRequest.Number) + ":closed",
+			Text:      text,
+			CreatedAt: e.PullRequest.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: prContext(e),
+	}
+}
+
+// NormalizePullRequestSynchronize normalizes a PR synchronize (new commits pushed) event.
+func NormalizePullRequestSynchronize(e *events.PullRequestEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypePullRequest,
+			Number: e.PullRequest.Number,
+			Title:  e.PullRequest.Title,
+			URL:    e.PullRequest.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatPRID(e.Repository.FullName, e.PullRequest.Number) + ":synchronize:" + e.PullRequest.Head.SHA[:8],
+			Text:      "New commits pushed to " + e.PullRequest.Head.Ref,
+			CreatedAt: e.PullRequest.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: prContext(e),
+	}
+}
+
+// NormalizePullRequestLabeled normalizes a PR labeled event.
+func NormalizePullRequestLabeled(e *events.PullRequestEvent) *NormalizedEvent {
+	labelName := ""
+	if e.Label != nil {
+		labelName = e.Label.Name
+	}
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypePullRequest,
+			Number: e.PullRequest.Number,
+			Title:  e.PullRequest.Title,
+			URL:    e.PullRequest.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeContextUpdate,
+			ID:        formatPRID(e.Repository.FullName, e.PullRequest.Number) + ":labeled:" + labelName,
+			Text:      "Label added: " + labelName,
+			CreatedAt: e.PullRequest.UpdatedAt,
+		},
+		Sender:  senderFromUser(e.Sender),
+		Context: prContext(e),
+	}
+}
+
+// NormalizeDiscussionCreated normalizes a discussion created event.
+func NormalizeDiscussionCreated(e *events.DiscussionEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeDiscussion,
+			Number: e.Discussion.Number,
+			Title:  e.Discussion.Title,
+			URL:    e.Discussion.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeDiscussionBody,
+			ID:        formatDiscussionID(e.Repository.FullName, e.Discussion.Number),
+			Text:      e.Discussion.Body,
+			CreatedAt: e.Discussion.CreatedAt,
+		},
+		Sender: senderFromUser(e.Sender),
+		Context: &Context{
+			DiscussionCategory: e.Discussion.Category.Name,
+		},
+	}
+}
+
+// NormalizeDiscussionComment normalizes a discussion comment event.
+func NormalizeDiscussionComment(e *events.DiscussionCommentEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type:   ThreadTypeDiscussion,
+			Number: e.Discussion.Number,
+			Title:  e.Discussion.Title,
+			URL:    e.Discussion.HTMLURL,
+		},
+		Message: Message{
+			Type:      MessageTypeComment,
+			ID:        formatDiscussionCommentID(e.Comment.ID),
+			Text:      e.Comment.Body,
+			CreatedAt: e.Comment.CreatedAt,
+		},
+		Sender: senderFromUser(e.Sender),
+		Context: &Context{
+			DiscussionCategory: e.Discussion.Category.Name,
+		},
+	}
+}
+
+// NormalizeCheckRun normalizes a check_run event.
+func NormalizeCheckRun(e *events.CheckRunEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type: ThreadTypePullRequest,
+		},
+		Message: Message{
+			Type:      MessageTypeCIStatus,
+			ID:        "check-run-" + itoa(e.CheckRun.ID),
+			Text:      fmt.Sprintf("Check run '%s': %s (%s)", e.CheckRun.Name, e.CheckRun.Status, e.CheckRun.Conclusion),
+			CreatedAt: e.CheckRun.StartedAt,
+		},
+		Sender: senderFromUser(e.Sender),
+		Context: &Context{
+			CIStatus:     e.CheckRun.Status,
+			CIConclusion: e.CheckRun.Conclusion,
+			EventAction:  string(e.Action),
+		},
+	}
+}
+
+// NormalizeWorkflowRun normalizes a workflow_run event.
+func NormalizeWorkflowRun(e *events.WorkflowRunEvent) *NormalizedEvent {
+	return &NormalizedEvent{
+		Provider:   Provider,
+		Repository: e.Repository.FullName,
+		Thread: Thread{
+			Type: ThreadTypePullRequest,
+		},
+		Message: Message{
+			Type:      MessageTypeCIStatus,
+			ID:        "workflow-run-" + itoa(e.WorkflowRun.ID),
+			Text:      fmt.Sprintf("Workflow '%s': %s (%s)", e.WorkflowRun.Name, e.WorkflowRun.Status, e.WorkflowRun.Conclusion),
+			CreatedAt: e.WorkflowRun.CreatedAt,
+		},
+		Sender: senderFromUser(e.Sender),
+		Context: &Context{
+			CIStatus:     e.WorkflowRun.Status,
+			CIConclusion: e.WorkflowRun.Conclusion,
+			EventAction:  string(e.Action),
+		},
+	}
+}
+
+func issueContext(e *events.IssueEvent) *Context {
+	ctx := &Context{
+		State:       e.Issue.State,
+		EventAction: string(e.Action),
+	}
+	for _, l := range e.Issue.Labels {
+		ctx.Labels = append(ctx.Labels, l.Name)
+	}
+	for _, a := range e.Issue.Assignees {
+		ctx.Assignees = append(ctx.Assignees, a.Login)
+	}
+	return ctx
+}
+
+func prContext(e *events.PullRequestEvent) *Context {
+	ctx := &Context{
+		State:       e.PullRequest.State,
+		Merged:      e.PullRequest.Merged,
+		HeadRef:     e.PullRequest.Head.Ref,
+		BaseRef:     e.PullRequest.Base.Ref,
+		EventAction: string(e.Action),
+	}
+	for _, l := range e.PullRequest.Labels {
+		ctx.Labels = append(ctx.Labels, l.Name)
+	}
+	for _, a := range e.PullRequest.Assignees {
+		ctx.Assignees = append(ctx.Assignees, a.Login)
+	}
+	return ctx
+}
+
+func formatDiscussionID(repo string, number int) string {
+	return repo + ":discussion:" + itoa(int64(number))
+}
+
+func formatDiscussionCommentID(id int64) string {
+	return "discussion-comment-" + itoa(id)
 }
 
 func senderFromUser(u events.User) Sender {
