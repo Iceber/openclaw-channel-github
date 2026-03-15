@@ -38,16 +38,45 @@ The OpenClaw GitHub Channel is a webhook-based integration that connects GitHub 
 
 ### Installation
 
+#### Option 1: OpenClaw Plugin Install (Recommended)
+
+```bash
+# Install directly via the OpenClaw CLI plugin system
+openclaw plugins install github.com/Iceber/openclaw-channel-github
+
+# Verify the installation
+openclaw plugins list
+
+# View channel status
+openclaw channels list
+openclaw channels status --channel github
+openclaw channels capabilities --channel github
+```
+
+#### Option 2: Build from Source
+
 ```bash
 # Clone the repository
 git clone https://github.com/Iceber/openclaw-channel-github.git
 cd openclaw-channel-github
 
 # Build the binary
+make build
+
+# Or build manually with Go
 go build -o openclaw-github-channel ./cmd/openclaw-github-channel/
+
+# Install system-wide (optional)
+make install
 
 # Run with a config file
 ./openclaw-github-channel -config config.json
+```
+
+#### Option 3: Go Install
+
+```bash
+go install github.com/Iceber/openclaw-channel-github/cmd/openclaw-github-channel@latest
 ```
 
 ### Minimal Configuration
@@ -320,3 +349,45 @@ pkg/
 e2e/                            # End-to-end tests
 docs/                           # Documentation
 ```
+
+## OpenClaw Plugin Integration
+
+This channel is packaged as an OpenClaw plugin and can be managed via the `openclaw` CLI.
+
+### Plugin Manifest
+
+The `plugin.yaml` in the repository root defines the plugin metadata, capabilities, and configuration schema. It is used by the `openclaw plugins install` command to register and configure the channel.
+
+### CLI Commands
+
+```bash
+# Install the plugin
+openclaw plugins install github.com/Iceber/openclaw-channel-github
+
+# List installed plugins
+openclaw plugins list
+
+# Remove the plugin
+openclaw plugins remove github
+
+# Channel management
+openclaw channels add --channel github
+openclaw channels list
+openclaw channels status --channel github
+openclaw channels capabilities --channel github
+openclaw channels logs --channel github
+```
+
+### Capabilities
+
+| Capability | Supported |
+|-----------|-----------|
+| Text inbound | ✅ |
+| Text outbound | ✅ |
+| Reaction | ✅ |
+| Edit awareness | ✅ |
+| Delete awareness | ❌ |
+| Attachment send | ❌ |
+| Thread reply | ✅ |
+| Rich review output | ✅ |
+| Realtime typing / presence | ❌ |

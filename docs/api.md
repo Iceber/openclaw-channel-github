@@ -406,3 +406,45 @@ When outbound API calls fail:
 ### Long Text Handling
 
 GitHub comments have a ~65,536 character limit. The channel automatically truncates responses that exceed this limit, appending `"..."` to indicate truncation.
+
+---
+
+## Plugin Manifest
+
+The channel includes a `plugin.yaml` manifest for integration with the OpenClaw plugin system.
+
+### Install via CLI
+
+```bash
+openclaw plugins install github.com/Iceber/openclaw-channel-github
+```
+
+### Manifest Fields
+
+| Field | Description |
+|-------|-------------|
+| `metadata.name` | Plugin name: `github` |
+| `metadata.version` | Semantic version |
+| `spec.channelType` | Channel type identifier: `github` |
+| `spec.runtime.language` | `go` |
+| `spec.runtime.entrypoint` | `cmd/openclaw-github-channel` |
+| `spec.build.command` | Build command for the binary |
+| `spec.capabilities` | Channel capability matrix |
+| `spec.events` | Supported GitHub webhook events |
+| `spec.permissions` | Required GitHub App permissions |
+| `spec.defaultConfig` | Default configuration template |
+
+### Capability Matrix
+
+| Capability | Supported |
+|-----------|-----------|
+| `textInbound` | ✅ |
+| `textOutbound` | ✅ |
+| `reaction` | ✅ |
+| `editAwareness` | ✅ |
+| `deleteAwareness` | ❌ |
+| `attachmentSend` | ❌ |
+| `threadReply` | ✅ |
+| `richReviewOutput` | ✅ |
+| `realtimeTyping` | ❌ |
+| `realtimePresence` | ❌ |

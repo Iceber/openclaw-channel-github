@@ -1,0 +1,106 @@
+# OpenClaw Plugin Manifest
+# Install with: openclaw plugins install github.com/Iceber/openclaw-channel-github
+apiVersion: openclaw.ai/v1
+kind: ChannelPlugin
+metadata:
+  name: github
+  version: 0.1.0
+  description: >
+    GitHub Channel for OpenClaw — connects GitHub Issues, Pull Requests, 
+    Discussions, and CI/CD workflows to the OpenClaw AI agent framework 
+    via webhooks.
+  author: Iceber
+  license: Apache-2.0
+  homepage: https://github.com/Iceber/openclaw-channel-github
+  repository: https://github.com/Iceber/openclaw-channel-github
+  keywords:
+    - github
+    - channel
+    - webhook
+    - issues
+    - pull-requests
+    - code-review
+
+spec:
+  # Channel type identifier used in OpenClaw configuration
+  channelType: github
+
+  # Runtime configuration
+  runtime:
+    # Language/runtime used to build the plugin
+    language: go
+    # Minimum Go version required
+    minGoVersion: "1.21"
+    # Binary entry point (relative to repo root)
+    entrypoint: cmd/openclaw-github-channel
+    # Binary name after build
+    binaryName: openclaw-channel-github
+
+  # Build instructions
+  build:
+    command: go build -o ${BINARY_PATH} ./cmd/openclaw-github-channel/
+    env:
+      - CGO_ENABLED=0
+
+  # Health check endpoint
+  healthCheck:
+    path: /health
+    interval: 30s
+
+  # Webhook endpoint for receiving GitHub events
+  webhook:
+    path: /webhook
+    method: POST
+
+  # Capabilities supported by this channel
+  capabilities:
+    textInbound: true
+    textOutbound: true
+    reaction: true
+    editAwareness: true
+    deleteAwareness: false
+    attachmentSend: false
+    threadReply: true
+    richReviewOutput: true
+    realtimeTyping: false
+    realtimePresence: false
+
+  # Events this channel can handle
+  events:
+    - issues
+    - issue_comment
+    - pull_request
+    - pull_request_review
+    - pull_request_review_comment
+    - discussion
+    - discussion_comment
+    - check_run
+    - workflow_run
+
+  # Required GitHub App permissions
+  permissions:
+    issues: write
+    pull_requests: write
+    metadata: read
+    discussions: write    # optional
+    contents: read        # optional
+
+  # Configuration schema reference
+  configSchema:
+    file: docs/api.md#configuration-json-schema
+
+  # Default configuration template
+  defaultConfig:
+    server:
+      addr: ":8080"
+    channel:
+      enabled: true
+      mode: app
+      ignoreBots: true
+      trigger:
+        requireMention: true
+        commands:
+          - /openclaw
+      outbound:
+        mode: comment
+        outboundMarker: "<!-- openclaw-outbound -->"
