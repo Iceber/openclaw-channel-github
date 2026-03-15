@@ -136,3 +136,303 @@ func TestIsRepoAllowed(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRepoAllowedMultiAccount(t *testing.T) {
+	cfg := &Config{
+		Channel: ChannelConfig{
+			Enabled: true,
+			Accounts: map[string]*AccountConfig{
+				"acct1": {
+					Mode:           "token",
+					WebhookSecret:  "s1",
+					Repositories:   []string{"org1/repo1"},
+				},
+				"acct2": {
+					Mode:           "token",
+					WebhookSecret:  "s2",
+					Repositories:   []string{"org2/repo2"},
+				},
+			},
+		},
+	}
+
+	if !cfg.IsRepoAllowed("org1/repo1") {
+		t.Error("expected org1/repo1 to be allowed via acct1")
+	}
+	if !cfg.IsRepoAllowed("Org2/Repo2") {
+		t.Error("expected Org2/Repo2 to be allowed via acct2 (case-insensitive)")
+	}
+	if cfg.IsRepoAllowed("other/repo") {
+		t.Error("expected other/repo to be disallowed")
+	}
+}
+
+func TestMultiAccountValidation(t *testing.T) {
+	// Valid multi-account config.
+	data := []byte(`{
+		"channel": {
+			"enabled": true,
+			"accounts": {
+				"production": {
+					"mode": "app",
+					"appId": 111,
+					"installationId": 222,
+					"privateKeyPath": "/key.pem",
+					"webhookSecret": "sec1",
+					"repositories": ["org/prod-repo"]
+				},
+				"staging": {
+					"mode": "token",
+					"webhookSecret": "sec2",
+					"repositories": ["org/staging-repo"]
+				}
+			}
+		}
+	}`)
+
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Channel.Accounts) != 2 {
+		t.Fatalf("expected 2 accounts, got %d", len(cfg.Channel.Accounts))
+	}
+}
+
+func TestMultiAccountValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+	}{
+		{
+			name: "account missing mode",
+			json: `{"channel":{"enabled":true,"accounts":{"a1":{"webhookSecret":"s","repositories":["o/r"]}}}}`,
+		},
+		{
+			name: "account missing webhookSecret",
+			json: `{"channel":{"enabled":true,"accounts":{"a1":{"mode":"token","repositories":["o/r"]}}}}`,
+		},
+		{
+			name: "account empty repositories",
+			json: `{"channel":{"enabled":true,"accounts":{"a1":{"mode":"token","webhookSecret":"s","repositories":[]}}}}`,
+		},
+		{
+			name: "account invalid repo format",
+			json: `{"channel":{"enabled":true,"accounts":{"a1":{"mode":"token","webhookSecret":"s","repositories":["noslash"]}}}}`,
+		},
+		{
+			name: "account app mode missing appId",
+			json: `{"channel":{"enabled":true,"accounts":{"a1":{"mode":"app","installationId":1,"privateKeyPath":"/k","webhookSecret":"s","repositories":["o/r"]}}}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.json))
+			if err == nil {
+				t.Error("expected validation error, got nil")
+			}
+		})
+	}
+}
+
+func TestGetAccountFlatConfig(t *testing.T) {
+	cfg := &Config{
+		Channel: ChannelConfig{
+			Mode:           "app",
+			AppID:          100,
+			InstallationID: 200,
+			PrivateKeyPath: "/key.pem",
+			WebhookSecret:  "secret",
+			Repositories:   []string{"owner/repo"},
+		},
+	}
+
+	// With no accounts map, any name returns the flat config as default.
+	acct := cfg.GetAccount("anything")
+	if acct == nil {
+		t.Fatal("expected non-nil default account")
+	}
+	if acct.AppID != 100 {
+		t.Errorf("expected AppID 100, got %d", acct.AppID)
+	}
+	if acct.Mode != "app" {
+		t.Errorf("expected mode 'app', got %s", acct.Mode)
+	}
+}
+
+func TestGetAccountMultiAccount(t *testing.T) {
+	cfg := &Config{
+		Channel: ChannelConfig{
+			Accounts: map[string]*AccountConfig{
+				"prod": {Mode: "app", AppID: 1},
+				"dev":  {Mode: "token"},
+			},
+		},
+	}
+
+	prod := cfg.GetAccount("prod")
+	if prod == nil || prod.AppID != 1 {
+		t.Error("expected prod account with AppID 1")
+	}
+
+	dev := cfg.GetAccount("dev")
+	if dev == nil || dev.Mode != "token" {
+		t.Error("expected dev account with mode 'token'")
+	}
+
+	missing := cfg.GetAccount("nonexistent")
+	if missing != nil {
+		t.Error("expected nil for nonexistent account")
+	}
+}
+
+func TestGetAccountForRepoFlat(t *testing.T) {
+	cfg := &Config{
+		Channel: ChannelConfig{
+			Mode:           "token",
+			WebhookSecret:  "s",
+			Repositories:   []string{"owner/repo"},
+		},
+	}
+
+	name, acct := cfg.GetAccountForRepo("owner/repo")
+	if name != "default" || acct == nil {
+		t.Fatalf("expected default account for owner/repo, got name=%q acct=%v", name, acct)
+	}
+	if acct.Mode != "token" {
+		t.Errorf("expected mode 'token', got %s", acct.Mode)
+	}
+
+	name, acct = cfg.GetAccountForRepo("other/repo")
+	if name != "" || acct != nil {
+		t.Error("expected no account for unmanaged repo")
+	}
+}
+
+func TestGetAccountForRepoMultiAccount(t *testing.T) {
+	cfg := &Config{
+		Channel: ChannelConfig{
+			Accounts: map[string]*AccountConfig{
+				"acct1": {
+					Mode:          "token",
+					WebhookSecret: "s1",
+					Repositories:  []string{"org1/repo1"},
+				},
+				"acct2": {
+					Mode:          "app",
+					WebhookSecret: "s2",
+					Repositories:  []string{"org2/repo2", "org2/repo3"},
+				},
+			},
+		},
+	}
+
+	name, acct := cfg.GetAccountForRepo("org2/repo3")
+	if name != "acct2" || acct == nil {
+		t.Fatalf("expected acct2 for org2/repo3, got name=%q", name)
+	}
+
+	name, acct = cfg.GetAccountForRepo("Org1/Repo1")
+	if name != "acct1" || acct == nil {
+		t.Fatalf("expected acct1 for Org1/Repo1 (case-insensitive), got name=%q", name)
+	}
+
+	name, acct = cfg.GetAccountForRepo("unknown/repo")
+	if name != "" || acct != nil {
+		t.Error("expected no account for unknown repo")
+	}
+}
+
+func TestOutboundValidation(t *testing.T) {
+	valid := []string{"comment", "review", "auto", ""}
+	for _, m := range valid {
+		t.Run("valid_"+m, func(t *testing.T) {
+			data := []byte(`{"channel":{"enabled":true,"mode":"token","webhookSecret":"s","repositories":["o/r"],"outbound":{"mode":"` + m + `"}}}`)
+			if _, err := Parse(data); err != nil {
+				t.Errorf("unexpected error for outbound mode %q: %v", m, err)
+			}
+		})
+	}
+
+	t.Run("invalid mode", func(t *testing.T) {
+		data := []byte(`{"channel":{"enabled":true,"mode":"token","webhookSecret":"s","repositories":["o/r"],"outbound":{"mode":"invalid"}}}`)
+		_, err := Parse(data)
+		if err == nil {
+			t.Error("expected validation error for invalid outbound mode")
+		}
+	})
+}
+
+func TestRateLimitValidation(t *testing.T) {
+	t.Run("valid positive", func(t *testing.T) {
+		data := []byte(`{"channel":{"enabled":true,"mode":"token","webhookSecret":"s","repositories":["o/r"],"rateLimit":{"maxEventsPerMinute":60}}}`)
+		cfg, err := Parse(data)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Channel.RateLimit.MaxEventsPerMinute != 60 {
+			t.Errorf("expected 60, got %d", cfg.Channel.RateLimit.MaxEventsPerMinute)
+		}
+	})
+
+	t.Run("negative value", func(t *testing.T) {
+		data := []byte(`{"channel":{"enabled":true,"mode":"token","webhookSecret":"s","repositories":["o/r"],"rateLimit":{"maxEventsPerMinute":-1}}}`)
+		_, err := Parse(data)
+		if err == nil {
+			t.Error("expected validation error for negative rate limit")
+		}
+	})
+}
+
+func TestAutoTriggerParsing(t *testing.T) {
+	data := []byte(`{
+		"channel": {
+			"enabled": true,
+			"mode": "token",
+			"webhookSecret": "s",
+			"repositories": ["o/r"],
+			"autoTrigger": {
+				"onPROpened": true,
+				"onIssueOpened": true
+			}
+		}
+	}`)
+
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Channel.AutoTrigger.OnPROpened {
+		t.Error("expected OnPROpened to be true")
+	}
+	if !cfg.Channel.AutoTrigger.OnIssueOpened {
+		t.Error("expected OnIssueOpened to be true")
+	}
+}
+
+func TestOutboundMarkerParsing(t *testing.T) {
+	data := []byte(`{
+		"channel": {
+			"enabled": true,
+			"mode": "token",
+			"webhookSecret": "s",
+			"repositories": ["o/r"],
+			"outbound": {
+				"mode": "comment",
+				"outboundMarker": "<!-- bot-marker -->"
+			}
+		}
+	}`)
+
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Channel.Outbound.Mode != "comment" {
+		t.Errorf("expected outbound mode 'comment', got %s", cfg.Channel.Outbound.Mode)
+	}
+	if cfg.Channel.Outbound.OutboundMarker != "<!-- bot-marker -->" {
+		t.Errorf("expected outbound marker, got %s", cfg.Channel.Outbound.OutboundMarker)
+	}
+}
