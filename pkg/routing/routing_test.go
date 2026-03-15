@@ -186,3 +186,144 @@ func TestIsBotSender(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateTrigger_LabelTrigger(t *testing.T) {
+	cfg := &config.TriggerConfig{
+		Labels: []string{"ai-review", "ai-help"},
+	}
+
+	event := &normalizer.NormalizedEvent{
+		Message: normalizer.Message{Text: "some text"},
+		Context: &normalizer.Context{
+			Labels: []string{"bug", "ai-review"},
+		},
+	}
+
+	result := EvaluateTrigger(cfg, event)
+	if !result.Triggered {
+		t.Error("expected label trigger to fire")
+	}
+	if result.Kind != normalizer.TriggerKindLabel {
+		t.Errorf("expected trigger kind 'label', got %q", result.Kind)
+	}
+}
+
+func TestEvaluateTrigger_LabelNoMatch(t *testing.T) {
+	cfg := &config.TriggerConfig{
+		Labels: []string{"ai-review"},
+	}
+
+	event := &normalizer.NormalizedEvent{
+		Message: normalizer.Message{Text: "some text"},
+		Context: &normalizer.Context{
+			Labels: []string{"bug", "documentation"},
+		},
+	}
+
+	result := EvaluateTrigger(cfg, event)
+	if result.Triggered {
+		t.Error("expected no trigger match for non-matching labels")
+	}
+}
+
+func TestEvaluateAutoTrigger_PROpened(t *testing.T) {
+	cfg := &config.AutoTriggerConfig{
+		OnPROpened: true,
+	}
+
+	event := &normalizer.NormalizedEvent{
+		Thread:  normalizer.Thread{Type: normalizer.ThreadTypePullRequest},
+		Message: normalizer.Message{Type: normalizer.MessageTypePRBody},
+	}
+
+	result := EvaluateAutoTrigger(cfg, event)
+	if !result.Triggered {
+		t.Error("expected auto trigger for PR opened")
+	}
+	if result.Kind != normalizer.TriggerKindAuto {
+		t.Errorf("expected trigger kind 'auto', got %q", result.Kind)
+	}
+}
+
+func TestEvaluateAutoTrigger_IssueOpened(t *testing.T) {
+	cfg := &config.AutoTriggerConfig{
+		OnIssueOpened: true,
+	}
+
+	event := &normalizer.NormalizedEvent{
+		Thread:  normalizer.Thread{Type: normalizer.ThreadTypeIssue},
+		Message: normalizer.Message{Type: normalizer.MessageTypeIssueBody},
+	}
+
+	result := EvaluateAutoTrigger(cfg, event)
+	if !result.Triggered {
+		t.Error("expected auto trigger for issue opened")
+	}
+}
+
+func TestEvaluateAutoTrigger_NotConfigured(t *testing.T) {
+	cfg := &config.AutoTriggerConfig{}
+
+	event := &normalizer.NormalizedEvent{
+		Thread:  normalizer.Thread{Type: normalizer.ThreadTypePullRequest},
+		Message: normalizer.Message{Type: normalizer.MessageTypePRBody},
+	}
+
+	result := EvaluateAutoTrigger(cfg, event)
+	if result.Triggered {
+		t.Error("expected no auto trigger when not configured")
+	}
+}
+
+func TestSessionKey_ReviewThread(t *testing.T) {
+	event := &normalizer.NormalizedEvent{
+		Repository: "owner/repo",
+		Thread: normalizer.Thread{
+			Type:   normalizer.ThreadTypePullRequest,
+			Number: 42,
+		},
+		Context: &normalizer.Context{
+			ReviewThreadID: 12345,
+		},
+	}
+
+	got := SessionKey(event)
+	expected := "github:owner/repo:pull_request:42:review-thread:12345"
+	if got != expected {
+		t.Errorf("SessionKey() = %q, want %q", got, expected)
+	}
+}
+
+func TestSessionKey_Discussion(t *testing.T) {
+	event := &normalizer.NormalizedEvent{
+		Repository: "owner/repo",
+		Thread: normalizer.Thread{
+			Type:   normalizer.ThreadTypeDiscussion,
+			Number: 7,
+		},
+	}
+
+	got := SessionKey(event)
+	expected := "github:owner/repo:discussion:7"
+	if got != expected {
+		t.Errorf("SessionKey() = %q, want %q", got, expected)
+	}
+}
+
+func TestHasOutboundMarker(t *testing.T) {
+	event := &normalizer.NormalizedEvent{
+		Message: normalizer.Message{
+			Text: "Some reply\n<!-- openclaw-outbound -->",
+		},
+	}
+
+	if !HasOutboundMarker(event, "<!-- openclaw-outbound -->") {
+		t.Error("expected outbound marker to be detected")
+	}
+	if HasOutboundMarker(event, "") {
+		t.Error("expected empty marker to not match")
+	}
+	if HasOutboundMarker(event, "<!-- different-marker -->") {
+		t.Error("expected different marker to not match")
+	}
+}
